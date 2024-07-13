@@ -1,5 +1,8 @@
+from ast import match_case
 import socketserver
+from ssl import SOCK_STREAM
 import struct
+from socket import AF_INET, socket
 
 serverport = 1234
 servername = "localhost"
@@ -42,15 +45,12 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
 
         success return true, else false
         """
+
         version = int.from_bytes(clientSocket.recv(1), "big")
         ulen = int.from_bytes(clientSocket.recv(1), "big")
         rcvdUsername = clientSocket.recv(ulen).decode()
         plen = int.from_bytes(clientSocket.recv(1), "big")
         rcvdPassword = clientSocket.recv(plen).decode()
-        print(
-            f"Version: {version}, Username length: {ulen}, Received Username: {rcvdUsername}, "
-            f"Password length: {plen}, Received Password: {rcvdPassword}"
-        )
 
         if rcvdUsername != self.username or rcvdPassword != self.password:
             # authentication failed, send back reply and close connection
@@ -63,6 +63,32 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
         successMsg = bytes(self.VERSION) + b"\x00"
         self.connection.sendall(successMsg)
         return True
+
+    def processCMD(self, clientSocket: socket.socket):
+        """
+        process specific request from client, mainly focus on CMD field
+        """
+
+        version, cmd, rsv, addressType = struct.unpack("!BBBB")
+        assert version == 5
+
+        match addressType:
+            case 1:  # ipv4
+                dstAddress = clientSocket.inet_ntoa(self.connection.recv(4))
+            case 3:  # domain name
+                domain_length = ord(self.connection.recv(1)[0])
+                dstAddress = self.connection.recv(domain_length)
+            case 4:  # ipv6
+                pass
+
+        dstPort = clientSocket.recv(2)
+
+        if cmd == 1:  # CONNECT
+            # establish connection with given address and port
+            with socket(AF_INET, SOCK_STREAM) as dstSocket:
+                dstSocket.connect((dstAddress, dstPort))
+                socksPort = dstSocket.getsockname()[1]
+                # TODO: get socksAddress and reply bound address and port to client
 
     def handle(self):
         # receive the AuthRequest and select an authentication method.
@@ -89,7 +115,11 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
 
         # get username/password for authentication
         if not self.verifyCredential(self.connection):
-            return
+            raise RuntimeError("Authentication failed, incorrect username/password")
+
+        # receive specific request
+        # here we only deal with CONNECT request
+        self.processCMD(self.connection)
 
 
 if __name__ == "__main__":
