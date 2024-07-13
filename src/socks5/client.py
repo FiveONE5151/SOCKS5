@@ -6,7 +6,8 @@ METHODS = [b"\x02", b"\x01"]
 NMETHOD = len(METHODS)
 servername = "localhost"
 serverport = 1234
-
+USERNAME = "wuyi"
+PASSWORD = "123456"
 # sends a request to choose authentication method
 # receive response from server, decode the method chosen by server(user/password)
 # send username and password to server
@@ -37,16 +38,40 @@ class AuthRequest:
         return struct.pack(format, self.VER, self.NMETHOD, combined_bytes)
 
 
-requestPacket = AuthRequest(METHODS, VER, NMETHOD)
+if __name__ == "__main__":
+    requestPacket = AuthRequest(METHODS, VER, NMETHOD)
 
-# create a socket of ipv4 and streaming
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    # connect to the server
-    s.connect((servername, serverport))
-    print(repr(requestPacket.toBytes()))
-    # send data
-    s.send(requestPacket.toBytes())
-    # receive data
-    data = s.recv(1024)
-    # print the data
-    print(repr(data))
+    # create a socket of ipv4 and streaming
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # connect to the server
+        s.connect((servername, serverport))
+        print(repr(requestPacket.toBytes()))
+        # send authentication methods available
+        s.send(requestPacket.toBytes())
+        # receive method chosen
+        serverVersion, chosenMethod = struct.unpack("!Bc", s.recv(2))
+        if serverVersion != VER:
+            raise RuntimeError("Server version is not {}".format(VER))
+        if chosenMethod not in METHODS:
+            raise RuntimeError("Chosen method {} not available ".format(chosenMethod))
+
+        # send USERNAME/PASSWORD
+        # print(bytes(VER)) 注意, bytes(a:int)产生的是一个长度为a个字节的为0的对象, 而不是转换为字节对象
+        # print(bytes(len(USERNAME)))
+        # print(USERNAME.encode())
+        # print(bytes(len(PASSWORD)))
+        # print(PASSWORD.encode())
+
+        s.sendall(
+            struct.pack(
+                f"!BB{len(USERNAME)}sB{len(PASSWORD)}s",
+                VER,
+                len(USERNAME),
+                USERNAME.encode("utf-8"),
+                len(PASSWORD),
+                PASSWORD.encode("utf-8"),
+            )
+        )
+
+        result = struct.unpack("!Bc", s.recv(2))
+        print(result)

@@ -11,13 +11,24 @@ class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 # create a handler
-class SocksProxy(socketserver.StreamRequestHandler):
+class SocksProxyHandler(socketserver.StreamRequestHandler):
     """handler class for socks proxy"""
 
     VERSION = b"\x05"
     AUTHMETHOD = b"\x02"  # authentication method is USER/PASSWORD
+    username = "wuyi"
+    password = "123456"
 
-    def rcv(self, clientSocket):
+    def getAvailableMethods(self, clientSocket):
+        """reveive authRequest from client and get available authentication methods
+
+        Args:
+            clientSocket (socket): socket connected to client
+
+        Returns:
+            (version:int, nmethods:int, methods:tuple)
+        """
+
         version = int.from_bytes(clientSocket.recv(1), "big")
         nmethods = int.from_bytes(clientSocket.recv(1), "big")
 
@@ -25,12 +36,41 @@ class SocksProxy(socketserver.StreamRequestHandler):
         methods = struct.unpack(format, clientSocket.recv(nmethods))
         return (version, nmethods, methods)
 
+    def verifyCredential(self, clientSocket) -> bool:
+        """
+        verify username and password sent by client
+
+        success return true, else false
+        """
+        version = int.from_bytes(clientSocket.recv(1), "big")
+        ulen = int.from_bytes(clientSocket.recv(1), "big")
+        rcvdUsername = clientSocket.recv(ulen).decode()
+        plen = int.from_bytes(clientSocket.recv(1), "big")
+        rcvdPassword = clientSocket.recv(plen).decode()
+        print(
+            f"Version: {version}, Username length: {ulen}, Received Username: {rcvdUsername}, "
+            f"Password length: {plen}, Received Password: {rcvdPassword}"
+        )
+
+        if rcvdUsername != self.username or rcvdPassword != self.password:
+            # authentication failed, send back reply and close connection
+            failureMsg = bytes(self.VERSION) + b"\xff"
+            self.connection.sendall(failureMsg)
+            self.server.close_request(self.request)
+            return False
+
+        # success, status code is x'00'
+        successMsg = bytes(self.VERSION) + b"\x00"
+        self.connection.sendall(successMsg)
+        return True
+
     def handle(self):
         # receive the AuthRequest and select an authentication method.
-        version, nmethods, methods = self.rcv(self.request)
+        version, nmethods, methods = self.getAvailableMethods(self.request)
         print(repr(methods))
         print(type(methods))
         print(type(methods[0]))
+        # assert version == 5
         if version != 5:
             raise RuntimeError(
                 "Socks version required 5 but received request from version {}".format(
@@ -47,9 +87,13 @@ class SocksProxy(socketserver.StreamRequestHandler):
         print(repr(reply))
         self.request.sendall(reply)
 
+        # get username/password for authentication
+        if not self.verifyCredential(self.connection):
+            return
+
 
 if __name__ == "__main__":
-    with ThreadingTCPServer((servername, serverport), SocksProxy) as server:
+    with ThreadingTCPServer((servername, serverport), SocksProxyHandler) as server:
         server.serve_forever()
 
 

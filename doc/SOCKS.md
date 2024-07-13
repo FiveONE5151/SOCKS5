@@ -93,6 +93,24 @@ The secondary will be sent only after the anticipated incoming connection betwee
 > 统一的通信通道：SOCKS协议设计目的是提供一个统一的代理机制。所有通信都通过SOCKS服务器中转，确保安全和一致性。如果SOCKS服务器直接通知应用服务器，会破坏这种统一性，并可能导致安全问题。
 > 复杂性和适应性：直接通知应用服务器会增加SOCKS服务器的复杂性，因为它需要适应各种不同的应用协议和通信模式。通过客户端中转，SOCKS服务器保持简单，只需处理基本的连接和转发任务。
 
+## USERNAME/PASSWORD
+
+1. client produce a username/password request:
+    +----+------+----------+------+----------+
+    |VER | ULEN |  UNAME   | PLEN |  PASSWD  |
+    +----+------+----------+------+----------+
+    | 1  |  1   | 1 to 255 |  1   | 1 to 255 |
+    +----+------+----------+------+----------+
+2. server response with authentication result
+    +----+--------+
+    |VER | STATUS | X'00' success, other code is failure
+    +----+--------+
+    | 1  |   1    |
+    +----+--------+
+
+
+
+
 ## socketServer in Python
 
 `class socketserver.TCPServer(server_address, RequestHandlerClass, bind_and_activate=True)`
