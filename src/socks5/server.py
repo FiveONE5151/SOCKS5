@@ -1,10 +1,10 @@
-from ast import match_case
 import socketserver
 from ssl import SOCK_STREAM
 import struct
-from socket import AF_INET, socket
+from socket import AF_INET, socket, inet_ntoa, inet_aton
+import select
 
-serverport = 1234
+serverport = 9011
 servername = "localhost"
 
 
@@ -21,6 +21,14 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
     AUTHMETHOD = b"\x02"  # authentication method is USER/PASSWORD
     username = "wuyi"
     password = "123456"
+
+    # def __init__(
+    #     self,
+    #     request: socket | tuple[bytes, socket],
+    #     client_address: socketserver.Any,
+    #     server: socketserver.BaseServer,
+    # ) -> None:
+    #     super().__init__(request, client_address, server)
 
     def getAvailableMethods(self, clientSocket):
         """reveive authRequest from client and get available authentication methods
@@ -60,35 +68,81 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
             return False
 
         # success, status code is x'00'
-        successMsg = bytes(self.VERSION) + b"\x00"
+        successMsg = struct.pack("!cB", self.VERSION, 0)
         self.connection.sendall(successMsg)
         return True
 
-    def processCMD(self, clientSocket: socket.socket):
+    def connectToDst(self, address, clientSocket: socket) -> socket:
+        try:
+            dstSocket = socket(AF_INET, SOCK_STREAM)
+            dstSocket.settimeout(10)  # timeout limit: 10 sec
+            dstSocket.connect(address)
+            socksAddress = dstSocket.getsockname()[0]
+            socksPort = dstSocket.getsockname()[1]
+            replyMsg = struct.pack(
+                "!cBBB4sH",
+                self.VERSION,
+                0,
+                0,
+                1,
+                inet_aton(socksAddress),
+                socksPort,
+            )
+            clientSocket.sendall(replyMsg)
+            return dstSocket
+        except TimeoutError:
+            replyMsg = struct.pack(
+                "!cBBB4sh",
+                self.VERSION,
+                3,
+                0,
+                15,
+                b"\xffff",
+                0,
+            )
+            clientSocket.sendall(replyMsg)
+            return None
+
+    def processCMD(self, clientSocket: socket):
         """
         process specific request from client, mainly focus on CMD field
         """
 
-        version, cmd, rsv, addressType = struct.unpack("!BBBB")
+        version, cmd, rsv, addressType = struct.unpack("!BBBB", clientSocket.recv(4))
         assert version == 5
 
         match addressType:
             case 1:  # ipv4
-                dstAddress = clientSocket.inet_ntoa(self.connection.recv(4))
+                dstAddress = inet_ntoa(clientSocket.recv(4))
             case 3:  # domain name
-                domain_length = ord(self.connection.recv(1)[0])
-                dstAddress = self.connection.recv(domain_length)
+                domain_length = ord(clientSocket.recv(1)[0])
+                dstAddress = clientSocket.recv(domain_length)
             case 4:  # ipv6
                 pass
 
-        dstPort = clientSocket.recv(2)
+        dstPort = struct.unpack("!H", clientSocket.recv(2))[0]
 
         if cmd == 1:  # CONNECT
             # establish connection with given address and port
-            with socket(AF_INET, SOCK_STREAM) as dstSocket:
-                dstSocket.connect((dstAddress, dstPort))
-                socksPort = dstSocket.getsockname()[1]
-                # TODO: get socksAddress and reply bound address and port to client
+            dstSocket = self.connectToDst((dstAddress, dstPort), clientSocket)
+            return dstSocket
+
+    def exchange_loop(self, client, remote):
+
+        while True:
+
+            # wait until client or remote is available for read
+            r, w, e = select.select([client, remote], [], [])
+
+            if client in r:
+                data = client.recv(4096)
+                if remote.send(data) <= 0:
+                    break
+
+            if remote in r:
+                data = remote.recv(4096)
+                if client.send(data) <= 0:
+                    break
 
     def handle(self):
         # receive the AuthRequest and select an authentication method.
@@ -119,33 +173,18 @@ class SocksProxyHandler(socketserver.StreamRequestHandler):
 
         # receive specific request
         # here we only deal with CONNECT request
-        self.processCMD(self.connection)
+        dstSocket = self.processCMD(
+            self.connection
+        )  # getting socket connected to dst server
+        if dstSocket is None:
+            return
+
+        # passing data from dst server to client
+        # TODO: close dstSocket when finished
+        self.exchange_loop(self.connection, dstSocket)
+        dstSocket.close()
 
 
 if __name__ == "__main__":
     with ThreadingTCPServer((servername, serverport), SocksProxyHandler) as server:
         server.serve_forever()
-
-
-# # create a socket of ipv4 and streaming
-# with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-#     # binde the socket to a hostname and port number
-#     s.bind(("localhost", serverport))
-
-#     # listen for incoming connections
-#     s.listen(1)  # 1 is the maximum number of connections
-
-#     # main loop
-
-#     while True:
-#         # accept connections
-#         (clientSocket, address) = s.accept()
-#         # do something with the new socket
-#         rcvMsg = rcv(clientSocket)
-#         print(rcvMsg)
-#         replyMsg = "This is from localhost:1234"
-#         nbytes = clientSocket.send(replyMsg.encode("utf-8"))
-#         if nbytes == 0:
-#             raise RuntimeError("socket connection broken")
-
-#     quit()

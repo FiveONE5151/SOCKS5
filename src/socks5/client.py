@@ -55,13 +55,6 @@ if __name__ == "__main__":
         if chosenMethod not in METHODS:
             raise RuntimeError("Chosen method {} not available ".format(chosenMethod))
 
-        # send USERNAME/PASSWORD
-        # print(bytes(VER)) 注意, bytes(a:int)产生的是一个长度为a个字节的为0的对象, 而不是转换为字节对象
-        # print(bytes(len(USERNAME)))
-        # print(USERNAME.encode())
-        # print(bytes(len(PASSWORD)))
-        # print(PASSWORD.encode())
-
         s.sendall(
             struct.pack(
                 f"!BB{len(USERNAME)}sB{len(PASSWORD)}s",
@@ -72,6 +65,25 @@ if __name__ == "__main__":
                 PASSWORD.encode("utf-8"),
             )
         )
+        authResult = struct.unpack("!BB", s.recv(2))
+        if authResult[1] != 0:
+            quit()
 
-        result = struct.unpack("!Bc", s.recv(2))
-        print(result)
+        # send specific request
+        dstAddress = "31.13.68.169"  # "106.13.245.94"
+        dstPort = 80
+        s.sendall(
+            struct.pack("!BBBB4sH", VER, 1, 0, 1, socket.inet_aton(dstAddress), dstPort)
+        )
+
+        # receive connection message
+        _, rep, rsv, atyp = struct.unpack("!BBBB", s.recv(4))
+        if rep != 0:
+            print("conncection to dst server failed.")
+            quit()
+        if atyp == 1:
+            bndAddr = socket.inet_ntoa(s.recv(4))
+            bndPort = struct.unpack("!H", s.recv(2))[0]
+            print("connection to dst server succeed.")
+
+        # connection succeed, passing data
